@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -165,4 +166,21 @@ test("SQLite keeps tokens and frozen reset values across process restarts", asyn
   expect(reopened.values.tokens().models[0]?.events).toBe(1);
   expect(reopened.history("codex")[0]?.value.estimatedUnusedUsd).toBe(17);
   reopened.close();
+});
+
+
+test("upgrading the pre-SSH token schema preserves retained records", () => {
+  const path = join(temporary(), "old.sqlite");
+  const old = new Database(path);
+  old.exec(`CREATE TABLE token_events (
+    source TEXT NOT NULL, eventKey TEXT NOT NULL, timestamp INTEGER NOT NULL, model TEXT NOT NULL,
+    inputTokens INTEGER NOT NULL, cachedInputTokens INTEGER NOT NULL, cacheWriteTokens INTEGER NOT NULL,
+    outputTokens INTEGER NOT NULL, cost REAL, pricingVersion TEXT NOT NULL, PRIMARY KEY(source, eventKey)
+  )`);
+  old.query("INSERT INTO token_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .run("/local", "response:old", start + 1000, "gpt-6-astra", 100000, 0, 0, 0, 1, "old");
+  old.close();
+  const upgraded = new UsageStore(path);
+  expect(upgraded.values.tokens().models[0]).toMatchObject({ model: "gpt-6-astra", events: 1, inputTokens: 100000, pricedApiCostUsd: 1 });
+  upgraded.close();
 });

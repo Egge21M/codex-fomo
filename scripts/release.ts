@@ -7,11 +7,11 @@ import { dirname, join, resolve } from "node:path";
 const files = [
   "package.json", "bun.lock", ".bun-version", "tsconfig.json", ".gitignore", ".editorconfig",
   "index.ts", "LICENSE", "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "CLAUDE.md",
-  "src/codex.ts", "src/output.ts", "src/pricing.ts", "src/quota.ts", "src/store.ts", "src/tokens.ts", "src/value.ts",
+  "src/sources.ts", "src/codex.ts", "src/output.ts", "src/pricing.ts", "src/quota.ts", "src/store.ts", "src/tokens.ts", "src/value.ts",
   "scripts/install-timer.ts", "scripts/install-plugin.ts", "scripts/release.ts",
   "omarchy/manifest.json", "omarchy/Runtime.js", "omarchy/Model.js", "omarchy/Service.qml", "omarchy/Panel.qml",
-  "docs/installation.md", "docs/cli.md", "docs/detection.md", "docs/api-value.md", "docs/omarchy.md", "docs/releasing.md",
-  "test/usage.test.ts", "test/cli.test.ts", "test/plugin.test.ts", "test/value.test.ts", "test/fixtures/app-server.ts",
+  "docs/sources.md", "docs/installation.md", "docs/cli.md", "docs/detection.md", "docs/api-value.md", "docs/omarchy.md", "docs/releasing.md",
+  "test/sources.test.ts", "test/usage.test.ts", "test/cli.test.ts", "test/plugin.test.ts", "test/value.test.ts", "test/fixtures/app-server.ts",
 ];
 
 async function run(command: string[], cwd: string, env = process.env): Promise<string> {

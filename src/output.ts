@@ -1,3 +1,4 @@
+import type { TokenExport } from "./sources";
 import type { Calibration, TokenSummary } from "./value";
 import { WEEK_MINS } from "./quota";
 import type { Observation, Reset, SummaryGroup, UsageSummary } from "./store";
@@ -26,6 +27,7 @@ export type ResetOutput = Omit<Reset, "detectedAt" | "oldResetAt" | "newResetAt"
 
 export type CommandData = {
   version: { version: string };
+  "export-tokens": TokenExport;
   tokens: TokenSummary;
   summary: {
     bucket: string;

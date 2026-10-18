@@ -8,6 +8,7 @@ value from local token logs. An optional Omarchy bar plugin shows the totals.
 - Scheduled and unexpected reset detection with timestamp-jitter tolerance.
 - Offline status, history, summaries, and tokens by model.
 - Versioned JSON output for plugins and frontend apps.
+- Local and SSH token sources for work across machines.
 - Local storage; no API key or additional runtime packages required.
 
 ## Quick start
@@ -56,11 +57,12 @@ continuous observed consumption. Missing values are distinct from zero.
 Unused allowance is inferred from the last sample before a reset. Activity
 between polls is unknown, and downtime can hide resets. Dollar values are
 workload-specific estimates at standard API token prices, **not subscription
-fees lost or an official OpenAI conversion**. Local logs may omit other devices
-or cloud usage. Built-in prices are dated reference values and can be overridden.
+fees lost or an official OpenAI conversion**. Configure SSH sources for remote work; unconfigured machines
+and cloud usage may still be missing. Built-in prices are dated reference values and can be overridden.
 
 ## Documentation
 
+- [Local and SSH source configuration](docs/sources.md)
 - [CLI, JSON contract, and settings](docs/cli.md)
 - [Reset detection and sampling limits](docs/detection.md)
 - [API-value calibration, coverage, and model prices](docs/api-value.md)
@@ -76,8 +78,8 @@ for compatibility with early installations.
 
 The database defaults to `~/.local/state/codex-usage/usage.sqlite`. It stores
 account IDs, quota observations, inferred resets, token metadata, and estimates.
-Prompts, responses, and authentication tokens are not stored. `poll` reads local
-Codex session logs and uses your existing Codex login through `codex app-server`.
+Prompts, responses, and authentication tokens are not stored. `poll` reads configured native
+Codex session logs (remote metadata is pulled over SSH) and uses your existing Codex login through `codex app-server`.
 No telemetry is added. Treat database files and diagnostic output as private.
 
 The token parser was informed by Omarchy's `omarchy-agent-usage-codex` collector,

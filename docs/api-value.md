@@ -1,7 +1,9 @@
 # Estimated API value
 
-Every `poll` also reads native Codex JSONL files from `$CODEX_HOME/sessions` and
-`$CODEX_HOME/archived_sessions` (default `~/.codex`). The parsing approach is based
+Every `poll` reads native Codex JSONL files from every configured local or SSH
+source. See [source configuration](sources.md) for remote machines. Without a
+config file, it reads `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`
+(default `~/.codex`) on the local machine. The parsing approach is based
 on Omarchy's installed `omarchy-agent-usage-codex` collector. This implementation
 prefers newer `token_usage_record` records, deduplicates by response ID, and looks
 up models by turn ID across files so subagents use their own models. For older
@@ -43,7 +45,7 @@ At least **five percentage points** of consumption are required to reduce the
 noise from rounded percentages. Tokens from intermediate polls where the displayed
 percentage stays unchanged are included. Calibration restarts after a reset,
 account/plan/bucket switch, a usage decrease, a polling gap over six minutes, an
-incomplete scan, a changed log directory, or changed prices. Missing model prices
+incomplete scan, a changed source list or log directory, or changed prices. Missing model prices
 block calibration for the affected interval. `poll --json` includes the latest
 `calibration`; `summary.groups[].value.currentCalibration` exposes it offline.
 
@@ -58,7 +60,7 @@ unvalued. `history.resets[].value` contains `estimatedUnusedUsd`, `reason`, and
 - `currentCalibration`: the latest calibration with its time bounds, quota delta,
   model totals, pricing version, warnings, and `weeklyApiValueUsd` (or `null`).
 
-`tokens --json` reports local totals since token collection began, across accounts
+`tokens --json` reports deduplicated totals from configured sources since token collection began, across accounts
 and directories; it is not an account billing report. `pricedApiCostUsd` always
 means the priced subset; inspect `unpricedEvents`. Polls refresh prices for retained
 records still present in the logs. Frozen reset values are never repriced.
@@ -69,7 +71,7 @@ prices, not subscription fees lost or an official allowance-to-USD conversion.
 They exclude tool charges, regional premiums, and Fast/Ultrafast price premiums.
 Logs don't reliably identify subscription versus API-key billing or the account
 that paid for each request. Calibration assumes the captured native sessions use
-the polled subscription. Other devices, cloud/Work tasks without local logs, pi,
+the polled subscription. Unconfigured devices, cloud/Work tasks without native logs, pi,
 OpenCode, deleted logs, and API-key traffic can bias it. A successful scan confirms
 readability, not complete account coverage. Changes in the mix of models or speed
 modes can change the inferred rate; usage during the reset polling interval is

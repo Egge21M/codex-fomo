@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0
+
+- Collect token metadata from configured SSH machines, deduplicate across sources,
+  and pause USD calibration when a source is incomplete.
+- Preserve and label historical local-only estimates; expose source health in JSON
+  and the Omarchy panel.
+- Show wasted USD in the bar, with a compact report and a separate details page.
+- Add a bundled remote exporter and document SSH setup, authentication, and recovery.
+- Preserve SSH agent/config settings in the five-minute timer installer.
+
+Upgrade: reinstall the Omarchy plugin and timer to apply their updates. Remote
+collection is opt-in; configure sources and install the exporter as described in
+`docs/sources.md`. Existing reset values stay frozen. Adding sources starts a new
+calibration; historical resets are not retroactively valued.
+
 ## 0.1.0
 
 Initial release.

@@ -1,3 +1,4 @@
+import type { SourceStatus } from "./sources";
 import type { Database } from "bun:sqlite";
 import { apiCost, type PriceBook } from "./pricing";
 import type { TokenScan, TokenUsage } from "./tokens";
@@ -8,6 +9,7 @@ export type ModelUsage = TokenUsage & { model: string; events: number; pricedApi
 export type Calibration = {
   basis: "standard-api-token-prices";
   coverage: "local-native-sessions";
+  sourceScope?: "local-only" | "configured-machines"; sources?: SourceStatus[];
   source: string; pricingVersion: string; pricingSource: string;
   scanComplete: boolean; warnings: string[];
   baselineAt: string; baselineUsedPercent: number;
@@ -20,10 +22,12 @@ export type ValueSummary = {
   estimatedUnusedUsd: number | null;
   valuedResetCount: number;
   unvaluedResetCount: number;
+  localOnlyValuedResetCount: number;
   currentCalibration: Calibration | null;
 };
 export type ResetValue = { estimatedUnusedUsd: number | null; reason: string; calibration: Calibration | null };
 export type TokenSummary = {
+  sourceScope: "local-only" | "configured-machines"; sources: SourceStatus[];
   coverage: "local-native-sessions"; recordingStartedAt: string | null;
   pricedApiCostUsd: number; unpricedEvents: number; models: ModelUsage[];
 };
@@ -46,6 +50,14 @@ export class ValueStore {
         resetId INTEGER PRIMARY KEY REFERENCES resets(id), value TEXT NOT NULL
       );
     `);
+    const columns = db.query<{ name: string }, []>("PRAGMA table_info(token_events)").all();
+    if (!columns.some(c => c.name === "updatedAt")) {
+      db.transaction(() => {
+        // A concurrent poll/widget may have migrated while we waited for the lock.
+        const current = db.query<{ name: string }, []>("PRAGMA table_info(token_events)").all();
+        if (!current.some(c => c.name === "updatedAt")) db.exec("ALTER TABLE token_events ADD COLUMN updatedAt INTEGER NOT NULL DEFAULT 0");
+      }).immediate();
+    }
   }
 
   start(at: number): number {
@@ -55,14 +67,14 @@ export class ValueStore {
 
   calibration(observationId: number): Calibration | null {
     const row = this.db.query<{ calibration: string }, [number]>("SELECT calibration FROM value_samples WHERE observationId = ?").get(observationId);
-    return row ? JSON.parse(row.calibration) : null;
+    return row ? this.withCoverage(JSON.parse(row.calibration)) : null;
   }
 
   record(sample: Observation, previous: Observation | null, scan: TokenScan, book: PriceBook, reset: Reset | null): Calibration {
-    const insert = this.db.query(`INSERT INTO token_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source, eventKey) DO UPDATE SET model=excluded.model, cost=excluded.cost, pricingVersion=excluded.pricingVersion`);
+    const insert = this.db.query(`INSERT INTO token_events (source, eventKey, timestamp, model, inputTokens, cachedInputTokens, cacheWriteTokens, outputTokens, cost, pricingVersion, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, eventKey) DO UPDATE SET model=excluded.model, cost=excluded.cost, pricingVersion=excluded.pricingVersion, updatedAt=excluded.updatedAt`);
     for (const event of scan.events) insert.run(scan.source, event.key, event.timestamp, event.model,
-      event.inputTokens, event.cachedInputTokens, event.cacheWriteTokens, event.outputTokens, apiCost(event.model, event, book), book.version);
+      event.inputTokens, event.cachedInputTokens, event.cacheWriteTokens, event.outputTokens, apiCost(event.model, event, book), book.version, sample.checkedAt);
 
     const prior = previous ? this.calibration(previous.id) : null;
     const lastGlobal = this.db.query<Observation, [number]>("SELECT * FROM observations WHERE id < ? ORDER BY id DESC LIMIT 1").get(sample.id);
@@ -82,6 +94,7 @@ export class ValueStore {
     const usdPerPercentagePoint = reason === "ready" ? pricedApiCostUsd / quotaUsedPercent : null;
     const calibration: Calibration = {
       basis: "standard-api-token-prices", coverage: "local-native-sessions", source: scan.source,
+      sourceScope: scan.sourceScope || "local-only", sources: scan.sources || [],
       pricingVersion: book.version, pricingSource: book.source, scanComplete: scan.complete, warnings: scan.warnings,
       baselineAt, baselineUsedPercent, checkedAt: new Date(sample.checkedAt).toISOString(),
       quotaUsedPercent, minimumQuotaPercent: MIN_CALIBRATION_PERCENT, pricedApiCostUsd, unpricedEvents,
@@ -105,13 +118,17 @@ export class ValueStore {
 
   resetValue(id: number): ResetValue {
     const row = this.db.query<{ value: string }, [number]>("SELECT value FROM reset_values WHERE resetId = ?").get(id);
-    return row ? JSON.parse(row.value) : { estimatedUnusedUsd: null, reason: "no-calibration", calibration: null };
+    if (!row) return { estimatedUnusedUsd: null, reason: "no-calibration", calibration: null };
+    const value: ResetValue = JSON.parse(row.value);
+    return { ...value, calibration: value.calibration ? this.withCoverage(value.calibration) : null };
   }
 
   summary(accountId: string, plan: string, bucket: string, resetCount: number): ValueSummary {
-    const totals = this.db.query<{ sum: number | null; count: number }, [string, string, string]>(`
+    const totals = this.db.query<{ sum: number | null; count: number; localOnly: number }, [string, string, string]>(`
       SELECT SUM(json_extract(v.value, '$.estimatedUnusedUsd')) AS sum,
-        COUNT(json_extract(v.value, '$.estimatedUnusedUsd')) AS count
+        COUNT(json_extract(v.value, '$.estimatedUnusedUsd')) AS count,
+        COALESCE(SUM(CASE WHEN json_extract(v.value, '$.estimatedUnusedUsd') IS NOT NULL
+          AND COALESCE(json_extract(v.value, '$.calibration.sourceScope'), 'local-only') = 'local-only' THEN 1 ELSE 0 END), 0) AS localOnly
       FROM reset_values v JOIN resets r ON r.id = v.resetId
       JOIN observations o ON o.id = r.currentObservationId
       WHERE o.accountId = ? AND o.plan = ? AND o.bucket = ?
@@ -119,24 +136,35 @@ export class ValueStore {
     const last = this.db.query<{ id: number }, [string, string, string]>(
       "SELECT id FROM observations WHERE accountId = ? AND plan = ? AND bucket = ? ORDER BY id DESC LIMIT 1",
     ).get(accountId, plan, bucket);
-    return { estimatedUnusedUsd: totals.sum, valuedResetCount: totals.count, unvaluedResetCount: resetCount - totals.count,
+    return { localOnlyValuedResetCount: totals.localOnly, estimatedUnusedUsd: totals.sum, valuedResetCount: totals.count, unvaluedResetCount: resetCount - totals.count,
       currentCalibration: last ? this.calibration(last.id) : null };
   }
 
   tokens(): TokenSummary {
     const started = this.db.query<{ startedAt: number }, []>("SELECT startedAt FROM token_tracking WHERE id = 1").get();
+    const last = this.db.query<{ calibration: string }, []>("SELECT calibration FROM value_samples ORDER BY observationId DESC LIMIT 1").get();
+    const calibration = last ? this.withCoverage(JSON.parse(last.calibration)) : null;
     const models = this.models(null, 0, Number.MAX_SAFE_INTEGER);
-    return { coverage: "local-native-sessions", recordingStartedAt: started ? new Date(started.startedAt).toISOString() : null,
+    return { sourceScope: calibration?.sourceScope || "local-only", sources: calibration?.sources || [],
+      coverage: "local-native-sessions", recordingStartedAt: started ? new Date(started.startedAt).toISOString() : null,
       pricedApiCostUsd: models.reduce((sum, m) => sum + m.pricedApiCostUsd, 0),
       unpricedEvents: models.reduce((sum, m) => sum + m.unpricedEvents, 0), models };
   }
 
+  private withCoverage(calibration: Calibration): Calibration {
+    return { ...calibration, sourceScope: calibration.sourceScope || "local-only", sources: calibration.sources || [] };
+  }
+
   private models(source: string | null, since: number, until: number): ModelUsage[] {
     return this.db.query<ModelUsage, [string | null, string | null, number, number]>(`
+      WITH selected AS (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY eventKey ORDER BY updatedAt DESC, rowid DESC) AS rank
+        FROM token_events WHERE (? IS NULL OR source = ?) AND timestamp > ? AND timestamp <= ?
+      )
       SELECT model, COUNT(*) AS events, SUM(inputTokens) AS inputTokens, SUM(cachedInputTokens) AS cachedInputTokens,
         SUM(cacheWriteTokens) AS cacheWriteTokens, SUM(outputTokens) AS outputTokens,
         COALESCE(SUM(cost), 0) AS pricedApiCostUsd, SUM(CASE WHEN cost IS NULL THEN 1 ELSE 0 END) AS unpricedEvents
-      FROM token_events WHERE (? IS NULL OR source = ?) AND timestamp > ? AND timestamp <= ?
+      FROM selected WHERE rank = 1
       GROUP BY model ORDER BY pricedApiCostUsd DESC, model
     `).all(source, source, since, until);
   }

@@ -11,4 +11,4 @@ An event is classified as `early` when detected before the previous scheduled re
 
 The account ID returned by Codex separates account histories. Older servers that omit it share an `unknown` account namespace; use a separate database when switching accounts on those servers. All successful samples are retained. No authentication tokens or raw API responses are stored.
 
-The SQLite write lock covers the whole poll, preventing concurrent collectors from recording out-of-order results. Requests time out after 30 seconds and the child process is terminated. The timer also bounds the whole service run to 45 seconds. Polling never starts a model turn.
+The SQLite write lock covers the whole poll, preventing concurrent collectors from recording out-of-order results. Requests time out after 30 seconds and the child process is terminated. The timer also bounds the whole service run to 90 seconds. Polling never starts a model turn.

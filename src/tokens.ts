@@ -1,3 +1,4 @@
+import type { SourceStatus } from "./sources";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
@@ -7,7 +8,7 @@ import { createInterface } from "node:readline";
 
 export type TokenUsage = { inputTokens: number; cachedInputTokens: number; cacheWriteTokens: number; outputTokens: number };
 export type TokenEvent = TokenUsage & { key: string; timestamp: number; model: string; source: "response" | "legacy" };
-export type TokenScan = { events: TokenEvent[]; complete: boolean; warnings: string[]; source: string };
+export type TokenScan = { events: TokenEvent[]; complete: boolean; warnings: string[]; source: string; sourceScope?: "local-only" | "configured-machines"; sources?: SourceStatus[] };
 type Context = { model: string; provider: string };
 type Candidate = { key: string; timestamp: number; turn: string; context: Context; usage: TokenUsage; source: "response" | "legacy" };
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");

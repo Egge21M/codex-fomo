@@ -7,6 +7,7 @@ runInNewContext(await Bun.file(new URL("../omarchy/Model.js", import.meta.url)).
 const group = {
   accountId: "a", plan: "pro", recordingStartedAt: "2026-10-15T10:00:00.000Z",
   resetCount: 2, estimatedUnusedWeeklyAllowances: 0.62, averageUnusedPercent: 31, samplingGapCount: 0,
+  value: { estimatedUnusedUsd: 12.34, valuedResetCount: 2, unvaluedResetCount: 0, currentCalibration: null },
 };
 const observation = {
   accountId: "a", plan: "pro", usedPercent: 12, remainingPercent: 88,
@@ -15,15 +16,15 @@ const observation = {
 const data = { observation, groups: [group] };
 function response(value: unknown) { return JSON.stringify({ schemaVersion: 1, ok: true, command: "summary", data: value }); }
 
-test("widget displays accumulated allowance equivalents and selects the latest account and plan", () => {
+test("widget displays wasted USD and selects the latest account and plan", () => {
   const result = model.parseSummary!(response({ observation, groups: [{ ...group, accountId: "b", estimatedUnusedWeeklyAllowances: 9 }, group] }));
-  expect(model.barLabel!(result, "")).toBe("Codex · 0.62× unused");
+  expect(model.barLabel!(result, "")).toBe("$12.34");
 });
 
 test("widget distinguishes no samples, no resets, and a real zero-unused result", () => {
-  expect(model.barLabel!(model.parseSummary!(response({ observation: null, groups: [] })), "")).toBe("Codex · no data");
-  expect(model.barLabel!({ observation, groups: [{ ...group, resetCount: 0, averageUnusedPercent: null }] }, "")).toBe("Codex · awaiting reset");
-  expect(model.barLabel!({ observation, groups: [{ ...group, estimatedUnusedWeeklyAllowances: 0 }] }, "")).toBe("Codex · 0.00× unused");
+  expect(model.barLabel!(model.parseSummary!(response({ observation: null, groups: [] })), "")).toBe("$—");
+  expect(model.barLabel!({ observation, groups: [{ ...group, resetCount: 0, averageUnusedPercent: null, value: { ...group.value, estimatedUnusedUsd: null, valuedResetCount: 0 } }] }, "")).toBe("$—");
+  expect(model.barLabel!({ observation, groups: [{ ...group, estimatedUnusedWeeklyAllowances: 0, value: { ...group.value, estimatedUnusedUsd: 0 } }] }, "")).toBe("$0.00");
 });
 
 test("widget detects schema errors and structured failures instead of displaying zero", () => {
@@ -31,7 +32,7 @@ test("widget detects schema errors and structured failures instead of displaying
   expect(() => model.parseSummary!(JSON.stringify({ schemaVersion: 1, ok: false, error: { message: "Database unavailable" } }))).toThrow("Database unavailable");
   expect(() => model.parseSummary!(response({ observation, groups: [{ ...group, estimatedUnusedWeeklyAllowances: null }] }))).toThrow("totals");
   expect(() => model.parseSummary!(response({ observation, groups: [] }))).toThrow("observation");
-  expect(model.barLabel!(data, "Database unavailable")).toBe("Codex · unavailable");
+  expect(model.barLabel!(data, "Database unavailable")).toBe("$—");
 });
 
 test("widget freshness keeps advancing between CLI refreshes", () => {
@@ -48,4 +49,24 @@ test("widget separates unavailable value from zero and explains calibration", ()
   expect(model.calibrationLabel!({ reason: "unpriced-models", weeklyApiValueUsd: null })).toContain("no API price");
   expect(model.calibrationLabel!({ reason: "ready", quotaUsedPercent: 10, weeklyApiValueUsd: 300 })).toContain("$300.00");
   expect(() => model.parseSummary!(response({ observation, groups: [{ ...group, value: { estimatedUnusedUsd: "oops" } }] }))).toThrow("API value");
+});
+
+
+test("partial dollar totals are marked and the report explains missing estimates", () => {
+  const partial = { observation, groups: [{ ...group, value: { ...group.value, unvaluedResetCount: 1 } }] };
+  expect(model.barLabel!(partial, "")).toBe("$12.34*");
+  expect(model.reportCaption!(partial, "")).toContain("partial");
+  const unknown = { observation, groups: [{ ...group, value: { ...group.value, estimatedUnusedUsd: null } }] };
+  expect(model.barLabel!(unknown, "")).toBe("$—");
+  expect(model.reportCaption!(unknown, "")).toBe("No dollar estimate yet");
+  expect(model.barLabel!(null, "")).toBe("$—");
+  expect(model.reportCaption!(null, "")).toContain("Loading");
+  expect(model.reportCaption!(data, "failed")).toBe("Summary unavailable");
+});
+
+test("source failures are surfaced without turning available totals into zero", () => {
+  expect(model.sourceProblem!({ scanComplete: false, sources: [{ id: "local", complete: true }, { id: "hermes", complete: false }] })).toContain("hermes unavailable");
+  expect(model.sourceProblem!({ scanComplete: false, sources: [] })).toContain("incomplete token coverage");
+  expect(model.sourceProblem!({ scanComplete: true, sources: [{ id: "hermes", complete: true }] })).toBe("");
+  expect(model.sourceProblem!(null)).toBe("");
 });

@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { name, version } from "./package.json";
+import { collectSources, loadSources, localPath } from "./src/sources";
 import { scanTokens } from "./src/tokens";
 import { loadPrices } from "./src/pricing";
 import { homedir } from "node:os";
@@ -38,7 +39,7 @@ function showReset(reset: Reset) {
 async function main() {
   const { positionals, values } = parseArgs({
     args, allowPositionals: true,
-    options: { json: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" }, limit: { type: "string", default: "20" } },
+    options: { since: { type: "string" }, until: { type: "string" }, "codex-home": { type: "string" }, json: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" }, limit: { type: "string", default: "20" } },
   });
   const command = positionals[0] ?? "status";
   responseCommand = command;
@@ -48,13 +49,14 @@ async function main() {
     return;
   }
   if (values.help || command === "help") {
-    const usage = `Usage: bun run index.ts <poll|status|history|summary|tokens> [--json] [--limit 20]
+    const usage = `Usage: bun run index.ts <poll|status|history|summary|tokens|export-tokens> [--json] [--limit 20]
 
   poll     Fetch weekly usage and record reset shifts greater than 60 seconds.
   status   Show the latest saved observation (no network request).
   history  Show detected resets, newest first.
   summary  Aggregate all recorded resets, separately by account and plan.
-  tokens   Show recorded local tokens by model and standard API-equivalent cost.
+  export-tokens  Export native token metadata; requires --since/--until Unix milliseconds.
+  tokens   Show recorded tokens by model and standard API-equivalent cost.
 
   --json   Emit one versioned JSON response on stdout, including errors.
   --version, -v  Print the installed package version.
@@ -64,13 +66,25 @@ Environment:
   CODEX_USAGE_BUCKET  Quota bucket to track (default: codex).
   CODEX_BIN          Codex executable (default: codex on PATH).
   CODEX_HOME         Native session directory (default: ~/.codex).
+  CODEX_USAGE_CONFIG  Override source configuration JSON file.
   CODEX_USAGE_PRICES  Override model pricing JSON file.
   CODEX_USAGE_DEBUG   Set to 1 to print app-server diagnostics.`;
     if (values.json) writeSuccess("help", { usage });
     else console.log(usage);
     return;
   }
-  if (positionals.length > 1 || !["poll", "status", "history", "summary", "tokens"].includes(command)) throw new Error("Unknown command. Run with --help.");
+  if (positionals.length > 1 || !["poll", "status", "history", "summary", "tokens", "export-tokens"].includes(command)) throw new Error("Unknown command. Run with --help.");
+  if (command === "export-tokens") {
+    const since = Number(values.since), until = Number(values.until);
+    if (values.since === undefined || values.until === undefined || !Number.isSafeInteger(since) || !Number.isSafeInteger(until) || since < 0 || until < since)
+      throw new Error("export-tokens requires --since and --until as nonnegative Unix milliseconds, with until >= since.");
+    const exportedAt = Date.now();
+    const scan = await scanTokens(since, until, values["codex-home"] ? localPath(values["codex-home"]) : undefined);
+    writeSuccess("export-tokens", { protocolVersion: 1, since, until, exportedAt, scan });
+    return;
+  }
+  if (values.since !== undefined || values.until !== undefined || values["codex-home"] !== undefined)
+    throw new Error("--since, --until and --codex-home apply only to export-tokens.");
   const limit = Number(values.limit);
   if (!Number.isSafeInteger(limit) || limit < 1) throw new Error("--limit must be a positive integer.");
   const stateHome = process.env.XDG_STATE_HOME;
@@ -85,11 +99,12 @@ Environment:
     if (command === "poll") {
       failureCode = "CONFIG_ERROR";
       const prices = await loadPrices();
+      const sources = await loadSources();
       failureCode = "DATABASE_ERROR";
       const result = await store.collect(async () => {
         try { return await readWeeklyQuota({ bucket }); }
         catch (error) { throw new CliError("CODEX_ERROR", error instanceof Error ? error.message : String(error)); }
-      }, { scan: scanTokens, prices });
+      }, { scan: (since, until) => collectSources(sources, since, until), prices });
       failureCode = "INTERNAL_ERROR";
       if (values.json) {
         const now = Date.now();
@@ -104,13 +119,15 @@ Environment:
         showObservation(result.observation);
         if (result.baseline) console.log("Baseline saved; no reset inferred for this first sample or changed plan.");
         if (result.reset) showReset(result.reset);
+        const calibration = store.values.calibration(result.observation.id);
+        if (calibration && !calibration.scanComplete) console.log("USD calibration paused: " + calibration.warnings.join(" "));
         if (result.usageDropped) console.log("Anomaly: usage fell without a reset timestamp shift greater than 60 seconds; no reset recorded.");
       }
     } else if (command === "tokens") {
       const tokens = store.values.tokens();
       if (values.json) writeSuccess("tokens", tokens);
       else {
-        console.log(`Local token recording since: ${tokens.recordingStartedAt || "not started; run poll"}`);
+        console.log(`Token recording since: ${tokens.recordingStartedAt || "not started; run poll"}`);
         for (const model of tokens.models) console.log(`${model.model}: ${model.inputTokens} input, ${model.cachedInputTokens} cached, ${model.cacheWriteTokens} cache-write, ${model.outputTokens} output — $${model.pricedApiCostUsd.toFixed(2)}${model.unpricedEvents ? ` (${model.unpricedEvents} unpriced records)` : ""}`);
         console.log(`Standard API-equivalent tokens: $${tokens.pricedApiCostUsd.toFixed(2)}${tokens.unpricedEvents ? " (partial; some models have no price)" : ""}`);
       }
@@ -140,7 +157,9 @@ Environment:
           console.log(calibration?.weeklyApiValueUsd !== null && calibration?.weeklyApiValueUsd !== undefined
             ? `Current weekly API-equivalent estimate: $${calibration.weeklyApiValueUsd.toFixed(2)} (${calibration.quotaUsedPercent.toFixed(1)} percentage points observed)`
             : `API-value calibration: ${calibration?.reason || "not started"}`);
-          console.log("USD estimates use local native sessions and standard API token prices; other devices/cloud usage is not captured.");
+          for (const source of calibration?.sources || []) console.log(`Source ${source.id}: ${source.complete ? "available" : "INCOMPLETE"}${source.warnings.length ? " — " + source.warnings.join(" ") : ""}`);
+          console.log(`Historical valued resets with local-only coverage: ${value.localOnlyValuedResetCount}`);
+          console.log("USD estimates use configured native session sources at standard API prices; unconfigured devices/cloud usage is not captured.");
           console.log(`Sampling gaps: ${group.samplingGapCount}`);
         }
         if (summary.observation) showObservation(summary.observation);

@@ -17,10 +17,10 @@ async function main() {
     CODEX_BIN: codex,
     PATH: process.env.PATH || "/usr/local/bin:/usr/bin:/bin",
   };
-  for (const name of ["CODEX_HOME", "XDG_STATE_HOME", "CODEX_USAGE_DB", "CODEX_USAGE_BUCKET", "CODEX_USAGE_PRICES", "XDG_CONFIG_HOME"]) {
+  for (const name of ["CODEX_HOME", "XDG_STATE_HOME", "CODEX_USAGE_DB", "CODEX_USAGE_BUCKET", "CODEX_USAGE_PRICES", "CODEX_USAGE_CONFIG", "SSH_AUTH_SOCK", "XDG_CONFIG_HOME"]) {
     if (process.env[name]) environment[name] = process.env[name]!;
   }
-  for (const name of ["CODEX_HOME", "CODEX_USAGE_DB", "CODEX_USAGE_PRICES"]) {
+  for (const name of ["CODEX_HOME", "CODEX_USAGE_DB", "CODEX_USAGE_PRICES", "CODEX_USAGE_CONFIG"]) {
     if (environment[name]) environment[name] = resolve(environment[name]);
   }
   const service = `[Unit]
@@ -30,7 +30,7 @@ Description=Collect Codex weekly usage
 Type=oneshot
 ExecStart=${quote(process.execPath).replaceAll("$", "$$")} run ${quote(join(root, "index.ts")).replaceAll("$", "$$")} poll
 ${Object.entries(environment).map(([key, value]) => `Environment=${quote(`${key}=${value}`)}`).join("\n")}
-TimeoutStartSec=45
+TimeoutStartSec=90
 UMask=0077
 `;
   const timer = `[Unit]

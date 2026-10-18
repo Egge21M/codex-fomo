@@ -42,6 +42,8 @@ To stop automatic collection:
 systemctl --user disable --now codex-usage.timer
 ```
 
+For remote work, configure [SSH token sources](sources.md) before relying on USD estimates.
+
 ## Upgrade
 
 1. Stop the timer and any in-progress collection:

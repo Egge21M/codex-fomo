@@ -22,6 +22,7 @@ Every response includes `schemaVersion: 1`, `ok`, `command`, and `generatedAt` (
 | `summary` | `{ bucket, recordingStartedAt, observation, groups }`, aggregating every recorded reset without a history limit |
 | `tokens` | `{ coverage, recordingStartedAt, pricedApiCostUsd, unpricedEvents, models }`; local records since token collection began |
 | `version` (`--version`) | `{ version }`; reads no database or credentials |
+| `export-tokens` | `{ protocolVersion, since, until, exportedAt, scan }`; metadata only, no database access |
 | `help` | `{ usage }` |
 
 Both `status` and `poll` return the same observation fields:
@@ -65,6 +66,7 @@ The top-level recording start is the earliest retained sample in the bucket; eac
 | `CODEX_USAGE_DEBUG` | `1` prints app-server diagnostics to stderr |
 | `XDG_STATE_HOME` | Absolute state-directory override |
 | `CODEX_HOME` | Honored by Codex for its existing authentication/configuration |
+| `CODEX_USAGE_CONFIG` | Source config override; see [SSH sources](sources.md) |
 | `CODEX_USAGE_PRICES` | Pricing JSON override; see [API value](api-value.md) |
 | `XDG_CONFIG_HOME` | Absolute config-directory override for pricing and systemd units |
 
@@ -73,3 +75,7 @@ The timer installer preserves the selected database, bucket, Codex home, and sta
 ## Storage
 
 `observations` stores account, bucket, plan, usage, reset time, check time, and the weekly duration. `resets` links the before/after observations and stores the estimate and classification. Check timestamps use Unix milliseconds; reset timestamps use Unix seconds, matching Codex. There are no runtime dependencies beyond Bun's built-in SQLite module.
+
+For multi-machine coverage, see [SSH sources](sources.md). Calibration and token
+responses add `sourceScope` and per-source `sources` status; reset summaries add
+`localOnlyValuedResetCount`. Historical reset values remain frozen.

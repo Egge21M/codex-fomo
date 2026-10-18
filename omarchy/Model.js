@@ -46,12 +46,19 @@ function activeGroup(data) {
 function allowance(value) { return value.toFixed(2) + "×"; }
 
 function barLabel(data, error) {
-  if (error) return "Codex · unavailable";
-  if (!data) return "Codex · …";
   var group = activeGroup(data);
-  if (!group) return "Codex · no data";
-  if (!group.resetCount) return "Codex · awaiting reset";
-  return "Codex · " + allowance(group.estimatedUnusedWeeklyAllowances) + " unused";
+  if (error || !group || !group.value || !finite(group.value.estimatedUnusedUsd)) return "$—";
+  return money(group.value.estimatedUnusedUsd) + (group.value.unvaluedResetCount > 0 ? "*" : "");
+}
+
+function reportCaption(data, error) {
+  if (error) return "Summary unavailable";
+  if (!data) return "Loading usage…";
+  var group = activeGroup(data);
+  if (!group) return "Waiting for the first usage sample";
+  if (!group.resetCount) return "Awaiting first reset";
+  if (!group.value || !finite(group.value.estimatedUnusedUsd)) return "No dollar estimate yet";
+  return "Estimated wasted API value" + (group.value.unvaluedResetCount > 0 ? " · partial" : "");
 }
 
 function duration(seconds) {
@@ -73,7 +80,14 @@ function calibrationLabel(calibration) {
   if (calibration.weeklyApiValueUsd !== null && finite(calibration.weeklyApiValueUsd))
     return "Weekly API equivalent ≈ " + money(calibration.weeklyApiValueUsd) + "\nBased on " + calibration.quotaUsedPercent.toFixed(1) + " percentage points of quota.";
   if (calibration.reason === "unpriced-models") return "Calibration unavailable: some models have no API price.";
-  if (calibration.reason === "incomplete-scan") return "Calibration unavailable: local token scan incomplete.";
+  if (calibration.reason === "incomplete-scan") return "Calibration paused: a token source is incomplete.";
   if (calibration.reason === "no-local-usage") return "Quota changed without matching local token usage.";
   return "Calibrating · " + calibration.quotaUsedPercent.toFixed(1) + " / " + calibration.minimumQuotaPercent + " percentage points observed";
+}
+
+function sourceProblem(calibration) {
+  if (!calibration || calibration.scanComplete !== false) return "";
+  var sources = calibration.sources || [];
+  var missing = sources.filter(function(s) { return !s.complete; }).map(function(s) { return s.id; });
+  return "USD calibration paused" + (missing.length ? " · " + missing.join(", ") + " unavailable or incomplete" : " · incomplete token coverage");
 }

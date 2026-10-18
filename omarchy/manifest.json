@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "egge.codex-usage",
   "name": "Codex FOMO",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "egge",
   "description": "Estimated unused weekly Codex allowance since recording began, with current usage and reset timing.",
   "kinds": ["bar-widget"],

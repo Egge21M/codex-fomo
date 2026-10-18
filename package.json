@@ -1,6 +1,6 @@
 {
   "name": "codex-fomo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -14,7 +14,8 @@
     "test": "bun test",
     "typecheck": "bun check",
     "release:pack": "bun run scripts/release.ts",
-    "verify": "bun check && bun test"
+    "verify": "bun check && bun test",
+    "build:exporter": "bun build index.ts --target=bun --outfile=dist/exporter/index.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.3"

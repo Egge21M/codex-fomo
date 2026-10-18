@@ -20,7 +20,7 @@ afterEach(() => rmSync(directory, { recursive: true, force: true }));
 
 async function cli(args: string[], env: Record<string, string> = {}) {
   const proc = Bun.spawn([process.execPath, join(import.meta.dir, "../index.ts"), ...args], {
-    env: { ...process.env, XDG_CONFIG_HOME: join(directory, "config"), CODEX_USAGE_PRICES: "", CODEX_USAGE_TEST_MODE: "", CODEX_HOME: join(directory, "codex-home"), CODEX_USAGE_DB: database, CODEX_USAGE_BUCKET: "codex", CODEX_BIN: fakeCodex, CODEX_USAGE_DEBUG: "0", ...env },
+    env: { ...process.env, XDG_CONFIG_HOME: join(directory, "config"), CODEX_USAGE_CONFIG: "", CODEX_USAGE_PRICES: "", CODEX_USAGE_TEST_MODE: "", CODEX_HOME: join(directory, "codex-home"), CODEX_USAGE_DB: database, CODEX_USAGE_BUCKET: "codex", CODEX_BIN: fakeCodex, CODEX_USAGE_DEBUG: "0", ...env },
     stdin: "ignore", stdout: "pipe", stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -209,8 +209,11 @@ test("poll, tokens and summary expose calibrated costs end to end", async () => 
   const checkedAt = Date.now() - 300_000;
   const store = new UsageStore(database);
   const { priceBook } = await import("../src/pricing");
+  const { collectSources, parseSources } = await import("../src/sources");
   await store.collect(async () => sample({ checkedAt, usedPercent: 50, resetsAt: 2_000_000_000 }), {
-    prices: priceBook(), scan: async () => ({ source: home, complete: true, warnings: [], events: [] }),
+    prices: priceBook(), scan: (since, until) => collectSources(parseSources({ sources: [{ id: "local", type: "local", codexHome: home }] }), since, until, {
+      local: async () => ({ source: home, complete: true, warnings: [], events: [] }), remote: async () => { throw new Error("not used"); },
+    }),
   });
   store.close();
   await Bun.write(join(home, "sessions/session.jsonl"), [
@@ -227,4 +230,29 @@ test("poll, tokens and summary expose calibrated costs end to end", async () => 
   expect(tokens.data.models[0]).toMatchObject({ model: "gpt-6-astra", inputTokens: 100_000, pricedApiCostUsd: 1 });
   const summary = parse(await cli(["summary", "--json"]));
   expect(summary.data.groups[0].value.currentCalibration.weeklyApiValueUsd).toBeCloseTo(100 / 13);
+});
+
+test("export-tokens reads metadata without opening a database, source config, or Codex connection", async () => {
+  const since = Date.now() - 1000, until = Date.now();
+  const home = join(directory, "export-home");
+  await Bun.write(join(home, "sessions/test.jsonl"), [
+    { type: "turn_context", payload: { turn_id: "export", model: "gpt-6-astra" } },
+    { type: "token_usage_record", timestamp: new Date(until).toISOString(), payload: {
+      turn_id: "export", response_id: "export", usage: { input_tokens: 10, output_tokens: 2 }, secret: "not exported",
+    } },
+  ].map(x => JSON.stringify(x)).join("\n"));
+  const output = await cli(["export-tokens", "--since", String(since), "--until", String(until), "--codex-home", home, "--json"],
+    { CODEX_BIN: "/missing", CODEX_USAGE_CONFIG: "/missing" });
+  expect(output.exitCode).toBe(0);
+  expect(parse(output)).toMatchObject({ command: "export-tokens", data: { protocolVersion: 1, since, until, scan: { complete: true, events: [{ key: "response:export" }] } } });
+  expect(output.stdout).not.toContain("not exported");
+  expect(existsSync(database)).toBe(false);
+  expect(parse(await cli(["export-tokens", "--json"]))).toMatchObject({ ok: false, error: { code: "INVALID_ARGUMENTS" } });
+});
+
+test("invalid source configuration fails polling without writing an observation", async () => {
+  const path = join(directory, "bad-sources.json");
+  await Bun.write(path, JSON.stringify({ sources: [{ id: "bad", type: "ssh", host: "--bad" }] }));
+  expect(parse(await cli(["poll", "--json"], { CODEX_USAGE_CONFIG: path }))).toMatchObject({ ok: false, error: { code: "CONFIG_ERROR" } });
+  expect(parse(await cli(["status", "--json"])).data.observation).toBeNull();
 });
